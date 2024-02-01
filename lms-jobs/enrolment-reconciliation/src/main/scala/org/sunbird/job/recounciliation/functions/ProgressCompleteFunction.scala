@@ -33,7 +33,16 @@ class ProgressCompleteFunction(config: EnrolmentReconciliationConfig)(implicit v
   override def processElement(events: List[CollectionProgress], context: ProcessFunction[List[CollectionProgress], String]#Context, metrics: Metrics): Unit = {
     logger.info("ProgressCompleteFunction: processElement: events size = " + events.size)
     val pendingEnrolments = if (config.filterCompletedEnrolments) events.filter {p =>
+      logger.info("ProgressCompleteFunction: userId: " + p.userId)
+      logger.info("ProgressCompleteFunction: courseId: " + p.courseId)
+      logger.info("ProgressCompleteFunction: batchId: " + p.batchId)
       val row = getEnrolment(p.userId, p.courseId, p.batchId)(metrics)
+      if(row != null) {
+        logger.info("ProgressCompleteFunction: status: " + row.getInt("status"))
+        logger.info("ProgressCompleteFunction: contentstatus: " + row.getString("contentstatus"))
+      } else {
+        logger.info("ProgressCompleteFunction: row: " + row)
+      }
       (row != null && row.getInt("status") != 2)
     } else events
 

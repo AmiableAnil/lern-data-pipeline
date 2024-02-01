@@ -238,7 +238,7 @@ class EnrolmentReconciliationFn(config: EnrolmentReconciliationConfig,  httpUtil
         throw new Exception(message)
       }
     } else {
-      logger.info(s"leaf nodes from redis cache for: $key", leafNodes)
+      logger.info(s"EnrolmentReconciliationFn: leaf nodes from redis cache for: $key", leafNodes.size)
       val completedCount = leafNodes.intersect(userConsumption.contents.filter(cc => cc._2.status == 2).map(cc => cc._2.contentId).toList.distinct).size
       val contentStatus = userConsumption.contents.map(cc => (cc._2.contentId, cc._2.status)).toMap
       val inputContents = userConsumption.contents.filter(cc => cc._2.fromInput).keys.toList
