@@ -31,11 +31,13 @@ class ProgressCompleteFunction(config: EnrolmentReconciliationConfig)(implicit v
   }
 
   override def processElement(events: List[CollectionProgress], context: ProcessFunction[List[CollectionProgress], String]#Context, metrics: Metrics): Unit = {
+    logger.info("ProgressCompleteFunction: processElement: events size = " + events.size)
     val pendingEnrolments = if (config.filterCompletedEnrolments) events.filter {p =>
       val row = getEnrolment(p.userId, p.courseId, p.batchId)(metrics)
       (row != null && row.getInt("status") != 2)
     } else events
-    
+
+    logger.info("ProgressCompleteFunction: processElement: pendingEnrolments size = " + pendingEnrolments.size)
     val enrolmentQueries = pendingEnrolments.map(enrolmentComplete => getEnrolmentCompleteQuery(enrolmentComplete))
     updateDB(config.thresholdBatchWriteSize, enrolmentQueries)(metrics)
     pendingEnrolments.foreach(e => {
@@ -113,6 +115,7 @@ class ProgressCompleteFunction(config: EnrolmentReconciliationConfig)(implicit v
     val ets = System.currentTimeMillis
     val mid = s"""LP.${ets}.${UUID.randomUUID}"""
     val event = s"""{"eid": "BE_JOB_REQUEST","ets": ${ets},"mid": "${mid}","actor": {"id": "Course Certificate Generator","type": "System"},"context": {"pdata": {"ver": "1.0","id": "org.sunbird.platform"}},"object": {"id": "${enrolment.batchId}_${enrolment.courseId}","type": "CourseCertificateGeneration"},"edata": {"userIds": ["${enrolment.userId}"],"action": "issue-certificate","iteration": 1, "trigger": "auto-issue","batchId": "${enrolment.batchId}","reIssue": false,"courseId": "${enrolment.courseId}"}}"""
+    logger.info("ProgressCompleteFunction: " +event)
     context.output(config.certIssueOutputTag, event)
     metrics.incCounter(config.certIssueEventsCount)
   }

@@ -65,6 +65,7 @@ class EnrolmentReconciliationFn(config: EnrolmentReconciliationConfig,  httpUtil
   override def processElement(event: Event, context: ProcessFunction[Event, String]#Context, metrics: Metrics): Unit = {
     metrics.incCounter(config.totalEventCount)
     if (event.isValidEvent(config.supportedEventType)) {
+      logger.info("Valid event ", event)
       // Fetch the content status from the table in batch format
       val dbUserConsumption: List[UserContentConsumption] = getContentStatusFromDB(
         Map("courseId" -> event.courseId, "userId" -> event.userId, "batchId" -> event.batchId), metrics)
@@ -237,6 +238,7 @@ class EnrolmentReconciliationFn(config: EnrolmentReconciliationConfig,  httpUtil
         throw new Exception(message)
       }
     } else {
+      logger.info(s"leaf nodes from redis cache for: $key", leafNodes)
       val completedCount = leafNodes.intersect(userConsumption.contents.filter(cc => cc._2.status == 2).map(cc => cc._2.contentId).toList.distinct).size
       val contentStatus = userConsumption.contents.map(cc => (cc._2.contentId, cc._2.status)).toMap
       val inputContents = userConsumption.contents.filter(cc => cc._2.fromInput).keys.toList
