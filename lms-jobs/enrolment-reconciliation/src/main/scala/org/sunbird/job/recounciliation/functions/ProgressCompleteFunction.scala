@@ -39,7 +39,6 @@ class ProgressCompleteFunction(config: EnrolmentReconciliationConfig)(implicit v
       val row = getEnrolment(p.userId, p.courseId, p.batchId)(metrics)
       if(row != null) {
         logger.info("ProgressCompleteFunction: status: " + row.getInt("status"))
-        logger.info("ProgressCompleteFunction: contentstatus: " + row.getString("contentstatus"))
       } else {
         logger.info("ProgressCompleteFunction: row: " + row)
       }
