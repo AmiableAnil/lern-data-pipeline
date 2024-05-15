@@ -668,8 +668,8 @@ user-deletion-cleanup:
     }
 
     sunbird_keycloak_user_federation_provider_id={{core_vault_sunbird_keycloak_user_federation_provider_id}}
-    user_read_api = "/user/v5/read/"
-    batch_search_api = "/course/v1/batch/list"
+    user_read_api = "/private/user/v1/read/"
+    batch_search_api = "/v1/course/batch/search"
 
     user {
         keyspace = "sunbird"
@@ -729,14 +729,33 @@ user-ownership-transfer:
              basePath = "{{ userorg_service_base_url }}"
          }
     }
-    user_read_api = "/user/v5/read/"
-    batch_search_api = "/course/v1/batch/list"
+    user_read_api = "/private/user/v1/read/"
+    batch_search_api = "/v1/course/batch/search"
     threshold.batch.write.size = {{ user_ownership_transfer_batch_write_size }}
 
   flink-conf: |+
     jobmanager.memory.flink.size: {{ flink_job_names['user-ownership-transfer'].jobmanager_memory }}
     taskmanager.memory.flink.size: {{ flink_job_names['user-ownership-transfer'].taskmanager_memory }}
     taskmanager.numberOfTaskSlots: {{ flink_job_names['user-ownership-transfer'].taskslots }}
+    parallelism.default: 1
+    jobmanager.execution.failover-strategy: region
+    taskmanager.memory.network.fraction: 0.1
+
+ml-transfer-ownership:
+  ml-transfer-ownership: |+
+    include file("/data/flink/conf/base-config.conf")
+    kafka {
+      input.topic = ${job.env}".user.ownership.transfer"
+      groupId = ${job.env}"-ml-transfer-ownership-group"
+    }
+    task {
+      ml.user.delete.parallelism = {{ ml_transfer_ownership_job_parallelism }}
+    }
+
+  flink-conf: |+
+    jobmanager.memory.flink.size: {{ flink_job_names['ml-transfer-ownership'].jobmanager_memory }}
+    taskmanager.memory.flink.size: {{ flink_job_names['ml-transfer-ownership'].taskmanager_memory }}
+    taskmanager.numberOfTaskSlots: {{ flink_job_names['ml-transfer-ownership'].taskslots }}
     parallelism.default: 1
     jobmanager.execution.failover-strategy: region
     taskmanager.memory.network.fraction: 0.1
