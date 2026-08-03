@@ -15,6 +15,7 @@ import org.sunbird.job.deletioncleanup.task.UserDeletionCleanupConfig
 import org.sunbird.job.deletioncleanup.util.KeyCloakConnectionProvider
 import org.sunbird.job.util.{CassandraUtil, HttpUtil, JSONUtil}
 import org.sunbird.job.{BaseProcessFunction, Metrics}
+import org.sunbird.job.cache.{DataCache, RedisConnect}
 
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -26,6 +27,7 @@ class UserDeletionCleanupFunction(config: UserDeletionCleanupConfig, httpUtil: H
 
   private[this] val logger = LoggerFactory.getLogger(classOf[UserDeletionCleanupFunction])
   lazy private val gson = new Gson()
+  private var dataCache: DataCache = _
 
   override def metricsList(): List[String] = {
     List(config.skipCount, config.successCount, config.totalEventsCount, config.apiReadMissCount, config.apiReadSuccessCount, config.dbUpdateCount)
@@ -34,10 +36,13 @@ class UserDeletionCleanupFunction(config: UserDeletionCleanupConfig, httpUtil: H
   override def open(parameters: Configuration): Unit = {
     super.open(parameters)
     cassandraUtil = new CassandraUtil(config.dbHost, config.dbPort, config.isMultiDCEnabled)
+    dataCache = new DataCache(config, new RedisConnect(config, Option(config.redisHost), Option(config.redisPort)), config.userDBIndex, List())
+    dataCache.init()
   }
 
   override def close(): Unit = {
     cassandraUtil.close()
+    dataCache.close()
     super.close()
   }
 
@@ -47,7 +52,9 @@ class UserDeletionCleanupFunction(config: UserDeletionCleanupConfig, httpUtil: H
     logger.info(entryLog)
     metrics.incCounter(config.totalEventsCount)
     val url = config.userOrgServiceBasePath + config.userReadApi + "/" + event.userId + "?identifier,rootOrgId"
+    logger.info(s"UserDeletionCleanupFunction:: Reading user details from URL: ${url}")
     val userReadResp = httpUtil.get(url)
+    logger.info(s"UserDeletionCleanupFunction:: User read response status: ${userReadResp.status}")
     if (200 == userReadResp.status) {
       logger.info(s"The user is not yet deleted/blocked, processing the cleanup for: ${event.userId}")
       metrics.incCounter(config.apiReadSuccessCount)
@@ -63,12 +70,12 @@ class UserDeletionCleanupFunction(config: UserDeletionCleanupConfig, httpUtil: H
           updateUserOrg(event.userId, event.organisation)(config, cassandraUtil)
 
           if(userDBMap.getOrElse(config.STATUS, 0).asInstanceOf[Int] != config.DELETION_STATUS) {
-            var deletionStatus: Map[String, Boolean] = Map[String, Boolean]("keycloakCredentials" -> false, "userLookUpTable" -> false, "userExternalIdTable" -> false, "userTable" -> false)
+            var deletionStatus: Map[String, Boolean] = Map[String, Boolean]("keycloakCredentials" -> false, "userLookUpTable" -> false, "userExternalIdTable" -> false, "userTable" -> false, "redisCache" -> false)
 
             try {
               // remove user credentials from keycloak if exists
               removeEntryFromKeycloak(event.userId)(config)
-              deletionStatus + ("keycloakCredentials" -> true)
+              deletionStatus = deletionStatus + ("keycloakCredentials" -> true)
             } catch {
               case ex: Exception =>
                 val exitLog = s"Exit Log:UserDeletionCleanup, Message:Context ${event.context},error:${ex}"
@@ -78,16 +85,23 @@ class UserDeletionCleanupFunction(config: UserDeletionCleanupConfig, httpUtil: H
 
             // remove user entries from lookup table
             removeEntryFromUserLookUp(userDetails)(config, cassandraUtil)
-            deletionStatus + ("userLookUpTable" -> true)
+            deletionStatus = deletionStatus + ("userLookUpTable" -> true)
 
             // update user entry in user table
             updateUser(event.userId)(config, cassandraUtil)
-            deletionStatus + ("userTable" -> true)
+            deletionStatus = deletionStatus + ("userTable" -> true)
+
+            // clear user cache
+            val key: String = config.userStoreKeyPrefix + event.userId
+            logger.info(s"UserDeletionCleanupFunction:processElement: Clearing user cache with key: $key")
+            dataCache.del(key)
+            logger.info(s"UserDeletionCleanupFunction:processElement: User cache with $key cleared")
+            deletionStatus = deletionStatus + ("redisCache" -> true)
 
             // remove user entries from externalId table
             val dbUserExternalIds: List[Map[String, String]] = getUserExternalIds(event.userId)(config, cassandraUtil)
             if(dbUserExternalIds.nonEmpty) deleteUserExternalIds(dbUserExternalIds)(config, cassandraUtil)
-            deletionStatus + ("userExternalIdTable" -> true)
+            deletionStatus = deletionStatus + ("userExternalIdTable" -> true)
 
 
             //Generate AUDIT telemetry event
@@ -136,6 +150,12 @@ class UserDeletionCleanupFunction(config: UserDeletionCleanupConfig, httpUtil: H
           // update organisation table
           updateUserOrg(event.userId, event.organisation)(config, cassandraUtil)
 
+          // clear user cache
+          val key: String = config.userStoreKeyPrefix + event.userId
+          logger.info(s"UserDeletionCleanupFunction:processElement: Clearing user cache with key: $key")
+          dataCache.del(key)
+          logger.info(s"UserDeletionCleanupFunction:processElement: User cache with $key cleared")
+
           // delete managed users
           if (event.managedUsers != null && !event.managedUsers.isEmpty) {
             event.managedUsers.forEach(managedUser => {
@@ -167,9 +187,9 @@ class UserDeletionCleanupFunction(config: UserDeletionCleanupConfig, httpUtil: H
   }
 
   def removeEntryFromKeycloak(userId: String)(implicit config: UserDeletionCleanupConfig): Unit = {
-    val keycloak = new KeyCloakConnectionProvider().getConnection
+    val keycloak = new KeyCloakConnectionProvider(config).getConnection
     val fedUserId = getFederatedUserId(userId)
-    val resource: UserResource = keycloak.realm(System.getenv("SUNBIRD_SSO_RELAM")).users.get(fedUserId)
+    val resource: UserResource = keycloak.realm(config.keycloakRealm).users.get(fedUserId)
     try {
       if (null != resource) resource.remove()
     } catch {
